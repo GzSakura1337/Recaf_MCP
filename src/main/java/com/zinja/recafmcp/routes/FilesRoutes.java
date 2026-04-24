@@ -8,9 +8,9 @@ import software.coley.recaf.path.FilePathNode;
 import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.workspace.model.Workspace;
 
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
-import java.util.stream.Collectors;
 
 public class FilesRoutes {
     private final WorkspaceManager wm;
@@ -23,39 +23,40 @@ public class FilesRoutes {
         server.get("/files/list", (req, res) -> {
             Workspace ws = wm.getCurrent();
             if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
-            int offset = req.queryInt("offset", 0);
-            int limit = req.queryInt("limit", 0);
 
             List<String> names = ws.filesStream()
                     .map(FilePathNode::getValue)
                     .map(FileInfo::getName)
                     .sorted()
-                    .collect(Collectors.toList());
+                    .toList();
 
-            JsonObject out = JsonResponses.paginated(names, "files", offset, limit,
-                    n -> { JsonObject o = new JsonObject(); o.addProperty("path", (String) n); return o; });
+            JsonObject out = JsonResponses.paginated(names, "files", req.queryInt("offset", 0), req.queryInt("limit", 0),
+                    name -> { JsonObject item = new JsonObject(); item.addProperty("path", name); return item; });
             res.json(out);
         });
 
         server.get("/files/content", (req, res) -> {
             Workspace ws = wm.getCurrent();
             if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
+
             String path = req.query("path");
             if (path == null || path.isEmpty()) {
                 res.status(400).json(JsonResponses.error("missing 'path'"));
                 return;
             }
+
             FilePathNode node = ws.findFile(path);
-            if (node == null) { res.status(404).json(JsonResponses.error("file not found")); return; }
+            if (node == null) {
+                res.status(404).json(JsonResponses.error("file not found"));
+                return;
+            }
+
             FileInfo file = node.getValue();
             byte[] bytes = file.getRawContent();
-
             JsonObject out = new JsonObject();
             out.addProperty("path", file.getName());
             out.addProperty("size", bytes.length);
 
-            // Heuristic: if we can decode as UTF-8 without replacement chars,
-            // treat it as text; otherwise base64.
             String asText = tryDecodeUtf8(bytes);
             if (asText != null) {
                 out.addProperty("encoding", "utf-8");
@@ -70,8 +71,13 @@ public class FilesRoutes {
         server.get("/files/manifest", (req, res) -> {
             Workspace ws = wm.getCurrent();
             if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
+
             FilePathNode node = ws.findFile("META-INF/MANIFEST.MF");
-            if (node == null) { res.json(JsonResponses.error("no MANIFEST.MF")); return; }
+            if (node == null) {
+                res.json(JsonResponses.error("no MANIFEST.MF"));
+                return;
+            }
+
             JsonObject out = new JsonObject();
             out.addProperty("path", "META-INF/MANIFEST.MF");
             out.addProperty("content", new String(node.getValue().getRawContent(), java.nio.charset.StandardCharsets.UTF_8));
@@ -79,21 +85,63 @@ public class FilesRoutes {
         });
 
         server.get("/files/strings", (req, res) -> {
-            // TODO: scan non-class files for printable strings. For a first cut
-            // this returns only the per-class constant-pool strings.
-            res.status(501).json(JsonResponses.error("strings-from-resources not yet implemented"));
+            Workspace ws = wm.getCurrent();
+            if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
+
+            List<JsonObject> strings = new ArrayList<>();
+            ws.filesStream().forEach(node -> {
+                FileInfo file = node.getValue();
+                for (PrintableString hit : extractPrintableStrings(file.getRawContent())) {
+                    JsonObject item = new JsonObject();
+                    item.addProperty("path", file.getName());
+                    item.addProperty("value", hit.value());
+                    item.addProperty("offset", hit.offset());
+                    strings.add(item);
+                }
+            });
+
+            JsonObject out = JsonResponses.paginated(strings, "strings", req.queryInt("offset", 0), req.queryInt("limit", 0), item -> item);
+            res.json(out);
         });
     }
 
     private static String tryDecodeUtf8(byte[] bytes) {
         try {
-            java.nio.charset.CharsetDecoder dec = java.nio.charset.StandardCharsets.UTF_8
-                    .newDecoder()
+            return java.nio.charset.StandardCharsets.UTF_8.newDecoder()
                     .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT);
-            return dec.decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+                    .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+                    .decode(java.nio.ByteBuffer.wrap(bytes))
+                    .toString();
         } catch (Exception e) {
             return null;
         }
     }
+
+    private static List<PrintableString> extractPrintableStrings(byte[] bytes) {
+        List<PrintableString> hits = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        int start = -1;
+
+        for (int i = 0; i < bytes.length; i++) {
+            int value = bytes[i] & 0xFF;
+            if (value >= 32 && value <= 126) {
+                if (current.isEmpty()) start = i;
+                current.append((char) value);
+                continue;
+            }
+            flush(hits, current, start);
+            start = -1;
+        }
+        flush(hits, current, start);
+        return hits;
+    }
+
+    private static void flush(List<PrintableString> hits, StringBuilder current, int start) {
+        if (current.length() >= 4) {
+            hits.add(new PrintableString(current.toString(), start));
+        }
+        current.setLength(0);
+    }
+
+    private record PrintableString(String value, int offset) {}
 }

@@ -87,7 +87,7 @@ public class RecafMcpPlugin implements Plugin {
 
         new WorkspaceRoutes(workspaceManager, resourceImporter, uiState).register(server);
         new ClassRoutes(workspaceManager).register(server);
-        new MethodRoutes(workspaceManager).register(server);
+        new MethodRoutes(workspaceManager, decompilerManager).register(server);
         new SearchRoutes(workspaceManager, searchService).register(server);
         new XrefsRoutes(workspaceManager, searchService, inheritanceGraphService).register(server);
         new RefactorRoutes(workspaceManager, mappingApplierService, mappingFormatManager, inheritanceGraphService)

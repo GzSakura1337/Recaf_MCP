@@ -13,27 +13,55 @@ import org.objectweb.asm.util.TraceMethodVisitor;
 import software.coley.recaf.info.JvmClassInfo;
 import software.coley.recaf.info.member.MethodMember;
 import software.coley.recaf.path.ClassPathNode;
+import software.coley.recaf.services.decompile.DecompileResult;
+import software.coley.recaf.services.decompile.DecompilerManager;
 import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.workspace.model.Workspace;
 
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 public class MethodRoutes {
     private final WorkspaceManager wm;
+    private final DecompilerManager dm;
 
-    public MethodRoutes(WorkspaceManager wm) {
+    public MethodRoutes(WorkspaceManager wm, DecompilerManager dm) {
         this.wm = wm;
+        this.dm = dm;
     }
 
     public void register(McpHttpServer server) {
         server.get("/method-by-name", (req, res) -> {
-            // A proper implementation: resolve the containing class, decompile it,
-            // then splice out the method using line numbers from DecompileResult.
-            // TODO: wire through DecompilerManager + line-number scan.
-            res.status(501).json(JsonResponses.error(
-                    "method-by-name not yet wired — decompile the class and return the matching method's line-range"));
+            Lookup lookup = resolve(req.query("class_name"), req.query("method_name"), req.query("descriptor"), res);
+            if (lookup == null) return;
+
+            DecompileResult result = dm.decompile(wm.getCurrent(), lookup.cls).get(60, TimeUnit.SECONDS);
+            if (result.getException() != null) {
+                res.status(500).json(JsonResponses.error(result.getException().toString()));
+                return;
+            }
+
+            MethodSourceSupport.ExtractedMethod extracted = MethodSourceSupport.extract(
+                    result.getText(), lookup.cls.getName(), lookup.method.getName());
+
+            JsonObject out = new JsonObject();
+            out.addProperty("class_name", lookup.cls.getName().replace('/', '.'));
+            out.addProperty("method_name", lookup.method.getName());
+            out.addProperty("descriptor", lookup.method.getDescriptor());
+            out.addProperty("decompiler", dm.getTargetJvmDecompiler().getName());
+            if (extracted == null) {
+                out.addProperty("warning", "method source could not be isolated; returning full class text");
+                out.addProperty("source", result.getText());
+                out.addProperty("text", result.getText());
+            } else {
+                out.addProperty("source", extracted.source());
+                out.addProperty("text", extracted.source());
+                out.addProperty("line_start", extracted.lineStart());
+                out.addProperty("line_end", extracted.lineEnd());
+            }
+            res.json(out);
         });
 
         server.get("/method-bytecode", (req, res) -> {
@@ -43,7 +71,7 @@ public class MethodRoutes {
             StringWriter sw = new StringWriter();
             PrintWriter pw = new PrintWriter(sw);
             Textifier textifier = new Textifier();
-            final boolean[] emitted = { false };
+            boolean[] emitted = { false };
 
             new ClassReader(lookup.cls.getBytecode()).accept(new ClassVisitor(Opcodes.ASM9) {
                 @Override
@@ -70,16 +98,18 @@ public class MethodRoutes {
         server.get("/method-info", (req, res) -> {
             Lookup lookup = resolve(req.query("class_name"), req.query("method_name"), req.query("descriptor"), res);
             if (lookup == null) return;
-            MethodMember m = lookup.method;
+
+            MethodMember method = lookup.method;
             JsonObject out = new JsonObject();
             out.addProperty("class_name", lookup.cls.getName().replace('/', '.'));
-            out.addProperty("name", m.getName());
-            out.addProperty("descriptor", m.getDescriptor());
-            out.addProperty("access", m.getAccess());
-            out.addProperty("signature", m.getSignature());
+            out.addProperty("name", method.getName());
+            out.addProperty("descriptor", method.getDescriptor());
+            out.addProperty("access", method.getAccess());
+            out.addProperty("signature", method.getSignature());
+
             JsonArray exceptions = new JsonArray();
-            if (m.getThrownTypes() != null) {
-                for (String t : m.getThrownTypes()) exceptions.add(t.replace('/', '.'));
+            if (method.getThrownTypes() != null) {
+                for (String type : method.getThrownTypes()) exceptions.add(type.replace('/', '.'));
             }
             out.add("exceptions", exceptions);
             res.json(out);
@@ -88,18 +118,25 @@ public class MethodRoutes {
 
     private Lookup resolve(String className, String methodName, String descriptor, com.zinja.recafmcp.http.Response res) throws Exception {
         Workspace ws = wm.getCurrent();
-        if (ws == null) { res.status(409).json(JsonResponses.error("no workspace open")); return null; }
+        if (ws == null) {
+            res.status(409).json(JsonResponses.error("no workspace open"));
+            return null;
+        }
         if (className == null || methodName == null || className.isEmpty() || methodName.isEmpty()) {
             res.status(400).json(JsonResponses.error("missing 'class_name' or 'method_name'"));
             return null;
         }
-        ClassPathNode node = ws.findJvmClass(className.replace('.', '/'));
-        if (node == null) { res.status(404).json(JsonResponses.error("class not found")); return null; }
-        JvmClassInfo cls = (JvmClassInfo) node.getValue();
 
+        ClassPathNode node = ws.findJvmClass(className.replace('.', '/'));
+        if (node == null) {
+            res.status(404).json(JsonResponses.error("class not found"));
+            return null;
+        }
+
+        JvmClassInfo cls = (JvmClassInfo) node.getValue();
         List<MethodMember> candidates = cls.getMethods().stream()
-                .filter(m -> m.getName().equals(methodName))
-                .filter(m -> descriptor == null || descriptor.isEmpty() || m.getDescriptor().equals(descriptor))
+                .filter(method -> method.getName().equals(methodName))
+                .filter(method -> descriptor == null || descriptor.isEmpty() || method.getDescriptor().equals(descriptor))
                 .toList();
 
         if (candidates.isEmpty()) {
@@ -108,16 +145,17 @@ public class MethodRoutes {
         }
         if (candidates.size() > 1) {
             JsonArray options = new JsonArray();
-            for (MethodMember m : candidates) {
-                JsonObject o = new JsonObject();
-                o.addProperty("descriptor", m.getDescriptor());
-                options.add(o);
+            for (MethodMember method : candidates) {
+                JsonObject option = new JsonObject();
+                option.addProperty("descriptor", method.getDescriptor());
+                options.add(option);
             }
             JsonObject err = JsonResponses.error("method name is ambiguous; pass 'descriptor' to disambiguate");
             err.add("candidates", options);
             res.status(409).json(err);
             return null;
         }
+
         return new Lookup(cls, candidates.get(0), descriptor != null && !descriptor.isEmpty() ? descriptor : null);
     }
 

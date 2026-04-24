@@ -128,14 +128,14 @@ sequenceDiagram
 
 ## Current Status
 
-This project is usable, but still early.
+This project is usable and now covers the main Recaf MCP workflow.
 
 - The bridge is working end to end.
 - Recaf loads the plugin and serves `127.0.0.1:8750`.
 - The Python server starts in stdio or streamable HTTP mode.
-- A number of advanced routes are still stubbed in the Java plugin, especially parts of workspace import, xrefs, refactor, export, and some searches.
+- The Java plugin now implements workspace open/attach, xrefs, refactors, export, decompiler switching, method source lookup, bytecode search, and resource-string extraction.
 
-So it is closer to `jadx_mcp_server` in repo shape and usage flow than in raw feature completeness.
+It is still earlier than `jadx_mcp_server` in maturity, but the core analysis and mutation loop is in place.
 
 ## Requirements
 

@@ -1,6 +1,5 @@
 package com.zinja.recafmcp.routes;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.zinja.recafmcp.http.JsonResponses;
 import com.zinja.recafmcp.http.McpHttpServer;
@@ -13,21 +12,10 @@ import software.coley.recaf.services.search.SearchService;
 import software.coley.recaf.services.workspace.WorkspaceManager;
 import software.coley.recaf.workspace.model.Workspace;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Pattern;
-import java.util.stream.Stream;
 
-/**
- * Search endpoints.
- *
- * The methods below implement name/member/string searches by streaming the
- * workspace directly — good enough for an initial scaffold. For richer queries
- * (instructions, numeric constants, scoped queries) switch to
- * {@link SearchService}: it exposes {@code search(Workspace, AbstractSearchQuery)}
- * and visitor-based result collection, which is what the Recaf UI uses.
- *
- * TODO: port these handlers onto SearchService once the exact query builders
- *       (StringSearchQuery, MemberReferenceSearchQuery, ...) are wired in.
- */
 public class SearchRoutes {
     private final WorkspaceManager wm;
     @SuppressWarnings("unused")
@@ -42,105 +30,95 @@ public class SearchRoutes {
         server.get("/search/classes", (req, res) -> {
             Workspace ws = wm.getCurrent();
             if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
-            Matcher matcher = Matcher.of(req.query("pattern", ""),
-                    req.queryBool("regex", false),
-                    req.queryBool("case_sensitive", true));
 
-            JsonArray hits = new JsonArray();
-            ws.jvmClassesStream()
+            Matcher matcher = Matcher.of(req.query("pattern", ""), req.queryBool("regex", false), req.queryBool("case_sensitive", true));
+            List<String> names = ws.jvmClassesStream()
                     .map(ClassPathNode::getValue)
                     .map(ClassInfo::getName)
-                    .filter(n -> matcher.matches(n.replace('/', '.')))
+                    .map(name -> name.replace('/', '.'))
+                    .filter(matcher::matches)
                     .sorted()
-                    .forEach(n -> {
-                        JsonObject o = new JsonObject();
-                        o.addProperty("name", n.replace('/', '.'));
-                        hits.add(o);
-                    });
-            JsonObject out = new JsonObject();
-            out.add("classes", hits);
+                    .toList();
+
+            JsonObject out = JsonResponses.paginated(names, "classes", req.queryInt("offset", 0), req.queryInt("limit", 0),
+                    name -> { JsonObject item = new JsonObject(); item.addProperty("name", name); return item; });
             res.json(out);
         });
 
         server.get("/search/members", (req, res) -> {
             Workspace ws = wm.getCurrent();
             if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
-            Matcher matcher = Matcher.of(req.query("pattern", ""),
-                    req.queryBool("regex", false),
-                    req.queryBool("case_sensitive", true));
-            String kind = req.query("kind", "any");
 
-            JsonArray hits = new JsonArray();
+            Matcher matcher = Matcher.of(req.query("pattern", ""), req.queryBool("regex", false), req.queryBool("case_sensitive", true));
+            String kind = req.query("kind", "any");
+            List<JsonObject> hits = new ArrayList<>();
+
             ws.jvmClassesStream().forEach(node -> {
                 JvmClassInfo cls = (JvmClassInfo) node.getValue();
                 if (kind.equals("any") || kind.equals("method")) {
-                    for (MethodMember m : cls.getMethods()) {
-                        if (matcher.matches(m.getName())) {
-                            JsonObject o = new JsonObject();
-                            o.addProperty("kind", "method");
-                            o.addProperty("owner", cls.getName().replace('/', '.'));
-                            o.addProperty("name", m.getName());
-                            o.addProperty("descriptor", m.getDescriptor());
-                            hits.add(o);
-                        }
+                    for (MethodMember method : cls.getMethods()) {
+                        if (matcher.matches(method.getName())) hits.add(memberHit("method", cls, method.getName(), method.getDescriptor()));
                     }
                 }
                 if (kind.equals("any") || kind.equals("field")) {
-                    for (FieldMember f : cls.getFields()) {
-                        if (matcher.matches(f.getName())) {
-                            JsonObject o = new JsonObject();
-                            o.addProperty("kind", "field");
-                            o.addProperty("owner", cls.getName().replace('/', '.'));
-                            o.addProperty("name", f.getName());
-                            o.addProperty("descriptor", f.getDescriptor());
-                            hits.add(o);
-                        }
+                    for (FieldMember field : cls.getFields()) {
+                        if (matcher.matches(field.getName())) hits.add(memberHit("field", cls, field.getName(), field.getDescriptor()));
                     }
                 }
             });
-            JsonObject out = new JsonObject();
-            out.add("members", hits);
+
+            JsonObject out = JsonResponses.paginated(hits, "members", req.queryInt("offset", 0), req.queryInt("limit", 0), hit -> hit);
             res.json(out);
         });
 
         server.get("/search/strings", (req, res) -> {
             Workspace ws = wm.getCurrent();
             if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
-            Matcher matcher = Matcher.of(req.query("pattern", ""),
-                    req.queryBool("regex", false),
-                    req.queryBool("case_sensitive", true));
 
-            JsonArray hits = new JsonArray();
-            ws.jvmClassesStream().forEach(node -> {
-                JvmClassInfo cls = (JvmClassInfo) node.getValue();
-                for (String s : cls.getStringConstants()) {
-                    if (matcher.matches(s)) {
-                        JsonObject o = new JsonObject();
-                        o.addProperty("owner", cls.getName().replace('/', '.'));
-                        o.addProperty("value", s);
-                        hits.add(o);
-                    }
-                }
-            });
-            JsonObject out = new JsonObject();
-            out.add("hits", hits);
+            Matcher matcher = Matcher.of(req.query("pattern", ""), req.queryBool("regex", false), req.queryBool("case_sensitive", true));
+            List<JsonObject> hits = SearchBytecodeSupport.searchStrings(ws, matcher::matches);
+            JsonObject out = JsonResponses.paginated(hits, "hits", req.queryInt("offset", 0), req.queryInt("limit", 0), hit -> hit);
             res.json(out);
         });
 
         server.get("/search/numbers", (req, res) -> {
-            // TODO: implement via SearchService.search(ws, new NumberSearchQuery(value))
-            //       or by streaming method insns and matching LdcInsnNode operands.
-            res.status(501).json(JsonResponses.error("numeric-constant search not yet wired"));
+            Workspace ws = wm.getCurrent();
+            if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
+
+            String value = req.query("value", "").trim();
+            if (value.isEmpty()) {
+                res.status(400).json(JsonResponses.error("missing 'value'"));
+                return;
+            }
+
+            List<JsonObject> hits = SearchBytecodeSupport.searchNumbers(ws, value);
+            JsonObject out = JsonResponses.paginated(hits, "hits", req.queryInt("offset", 0), req.queryInt("limit", 0), hit -> hit);
+            res.json(out);
         });
 
         server.get("/search/instructions", (req, res) -> {
-            // TODO: implement via SearchService or ClassReader visitor that filters
-            //       on opcode mnemonic + operand substring.
-            res.status(501).json(JsonResponses.error("instruction search not yet wired"));
+            Workspace ws = wm.getCurrent();
+            if (ws == null) { res.json(JsonResponses.error("no workspace open")); return; }
+
+            List<JsonObject> hits = SearchBytecodeSupport.searchInstructions(
+                    ws,
+                    req.query("opcode", ""),
+                    req.query("operand", ""),
+                    req.query("class_filter", ""));
+            JsonObject out = JsonResponses.paginated(hits, "hits", req.queryInt("offset", 0), req.queryInt("limit", 0), hit -> hit);
+            res.json(out);
         });
     }
 
-    /** Tiny text matcher supporting regex / case-insensitive / substring modes. */
+    private static JsonObject memberHit(String kind, JvmClassInfo cls, String name, String descriptor) {
+        JsonObject item = new JsonObject();
+        item.addProperty("kind", kind);
+        item.addProperty("owner", cls.getName().replace('/', '.'));
+        item.addProperty("name", name);
+        item.addProperty("descriptor", descriptor);
+        return item;
+    }
+
     private static final class Matcher {
         private final Pattern pattern;
         private final String needle;
@@ -154,8 +132,7 @@ public class SearchRoutes {
 
         static Matcher of(String text, boolean regex, boolean caseSensitive) {
             if (regex) {
-                int flags = caseSensitive ? 0 : Pattern.CASE_INSENSITIVE;
-                return new Matcher(Pattern.compile(text, flags), null, caseSensitive);
+                return new Matcher(Pattern.compile(text, caseSensitive ? 0 : Pattern.CASE_INSENSITIVE), null, caseSensitive);
             }
             return new Matcher(null, caseSensitive ? text : text.toLowerCase(), caseSensitive);
         }
@@ -163,8 +140,7 @@ public class SearchRoutes {
         boolean matches(String input) {
             if (input == null) return false;
             if (pattern != null) return pattern.matcher(input).find();
-            String s = caseSensitive ? input : input.toLowerCase();
-            return s.contains(needle);
+            return (caseSensitive ? input : input.toLowerCase()).contains(needle);
         }
     }
 }
