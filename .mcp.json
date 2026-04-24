@@ -1,8 +1,7 @@
 {
   "mcpServers": {
     "recaf": {
-      "command": "python",
-      "args": ["recaf_mcp_server.py"]
+      "url": "http://127.0.0.1:8751/mcp"
     }
   }
 }

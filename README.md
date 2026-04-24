@@ -189,11 +189,8 @@ pip install -r requirements.txt
 
 ### 5. Start the MCP server
 
-StdIO mode:
-
-```powershell
-python recaf_mcp_server.py
-```
+For Codex/Desktop clients, prefer HTTP mode.
+This avoids local stdio transport mismatches and matches the `jadx_mcp_server` setup.
 
 HTTP mode:
 
@@ -201,16 +198,21 @@ HTTP mode:
 python recaf_mcp_server.py --http --port 8751
 ```
 
+One-click PowerShell launcher:
+
+```powershell
+.\start_recaf_mcp_http.ps1
+```
+
 ## MCP Client Config
 
-This repository includes a project-local `.mcp.json`:
+This repository includes a project-local `.mcp.json` using HTTP MCP:
 
 ```json
 {
   "mcpServers": {
     "recaf": {
-      "command": "python",
-      "args": ["recaf_mcp_server.py"]
+      "url": "http://127.0.0.1:8751/mcp"
     }
   }
 }
