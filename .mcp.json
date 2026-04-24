@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "recaf": {
+      "command": "python",
+      "args": ["mcp-server/recaf_mcp_server.py"]
+    }
+  }
+}

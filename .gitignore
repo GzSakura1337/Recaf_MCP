@@ -1,0 +1,15 @@
+.gradle/
+.idea/
+build/
+out/
+
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+libs/recaf.jar
+*.log
+
+!.gitkeep
