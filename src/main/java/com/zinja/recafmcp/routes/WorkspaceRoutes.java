@@ -5,42 +5,61 @@ import com.google.gson.JsonObject;
 import com.zinja.recafmcp.http.JsonResponses;
 import com.zinja.recafmcp.http.McpHttpServer;
 import com.zinja.recafmcp.state.UiState;
+import software.coley.recaf.info.properties.builtin.InputFilePathProperty;
 import software.coley.recaf.services.workspace.WorkspaceManager;
+import software.coley.recaf.services.workspace.io.ResourceImporter;
+import software.coley.recaf.workspace.model.BasicWorkspace;
 import software.coley.recaf.workspace.model.Workspace;
+import software.coley.recaf.workspace.model.resource.WorkspaceFileResource;
 import software.coley.recaf.workspace.model.resource.WorkspaceResource;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 public class WorkspaceRoutes {
     private final WorkspaceManager wm;
+    private final ResourceImporter importer;
     private final UiState uiState;
 
-    public WorkspaceRoutes(WorkspaceManager wm, UiState uiState) {
+    public WorkspaceRoutes(WorkspaceManager wm, ResourceImporter importer, UiState uiState) {
         this.wm = wm;
+        this.importer = importer;
         this.uiState = uiState;
     }
 
     public void register(McpHttpServer server) {
         server.get("/workspace/info", (req, res) -> {
             Workspace ws = wm.getCurrent();
+            JsonObject out = new JsonObject();
+            out.addProperty("has_workspace", ws != null);
             if (ws == null) {
-                res.json(JsonResponses.error("no workspace open"));
+                res.json(out);
                 return;
             }
-            JsonObject out = new JsonObject();
-            out.addProperty("has_workspace", true);
+
             out.add("primary", resourceSummary(ws.getPrimaryResource()));
             JsonArray supporting = new JsonArray();
-            for (WorkspaceResource r : ws.getSupportingResources()) supporting.add(resourceSummary(r));
+            for (WorkspaceResource resource : ws.getSupportingResources()) {
+                supporting.add(resourceSummary(resource));
+            }
             out.add("supporting", supporting);
             res.json(out);
         });
 
         server.get("/workspace/supporting", (req, res) -> {
             Workspace ws = requireWorkspace(res);
-            if (ws == null) return;
-            JsonArray arr = new JsonArray();
-            for (WorkspaceResource r : ws.getSupportingResources()) arr.add(resourceSummary(r));
+            if (ws == null) {
+                return;
+            }
+
+            JsonArray resources = new JsonArray();
+            for (WorkspaceResource resource : ws.getSupportingResources()) {
+                resources.add(resourceSummary(resource));
+            }
+
             JsonObject out = new JsonObject();
-            out.add("resources", arr);
+            out.add("resources", resources);
             res.json(out);
         });
 
@@ -50,25 +69,41 @@ public class WorkspaceRoutes {
         });
 
         server.post("/workspace/open", (req, res) -> {
-            // TODO: implement using ResourceImporter.
-            //
-            //   @Inject ResourceImporter importer; // software.coley.recaf.services.workspace.io.ResourceImporter
-            //   WorkspaceResource resource = importer.importResource(Paths.get(path));
-            //   Workspace ws = new BasicWorkspace(resource);
-            //   wm.setCurrent(ws);
-            //
-            // The importer auto-detects jar / war / class / directory.
-            String path = req.bodyString("path", "");
-            if (path.isEmpty()) {
-                res.status(400).json(JsonResponses.error("missing 'path'"));
+            Path path = requirePath(req.bodyString("path", ""), res);
+            if (path == null) {
                 return;
             }
-            res.status(501).json(JsonResponses.error("open_workspace not yet wired — inject ResourceImporter and call importer.importResource(Paths.get(path))"));
+
+            WorkspaceResource resource = importer.importResource(path);
+            resource.setPropertyValue(InputFilePathProperty.KEY, path);
+            if (wm.hasCurrentWorkspace()) {
+                wm.closeCurrent();
+            }
+            wm.setCurrentIgnoringConditions(new BasicWorkspace(resource));
+
+            JsonObject out = JsonResponses.ok("workspace opened");
+            out.add("primary", resourceSummary(resource));
+            res.json(out);
         });
 
         server.post("/workspace/add-supporting", (req, res) -> {
-            // TODO: same importer flow, then workspace.addSupportingResource(resource).
-            res.status(501).json(JsonResponses.error("add_supporting_resource not yet wired"));
+            Workspace ws = requireWorkspace(res);
+            if (ws == null) {
+                return;
+            }
+
+            Path path = requirePath(req.bodyString("path", ""), res);
+            if (path == null) {
+                return;
+            }
+
+            WorkspaceResource resource = importer.importResource(path);
+            resource.setPropertyValue(InputFilePathProperty.KEY, path);
+            ws.addSupportingResource(resource);
+
+            JsonObject out = JsonResponses.ok("supporting resource added");
+            out.add("resource", resourceSummary(resource));
+            res.json(out);
         });
 
         server.get("/current-class", (req, res) -> {
@@ -77,9 +112,7 @@ public class WorkspaceRoutes {
             out.addProperty("class_name", name);
             if (name != null) {
                 Workspace ws = wm.getCurrent();
-                if (ws != null && ws.findJvmClass(name) != null) {
-                    out.addProperty("found", true);
-                }
+                out.addProperty("found", ws != null && ws.findJvmClass(name) != null);
             }
             res.json(out);
         });
@@ -100,16 +133,40 @@ public class WorkspaceRoutes {
         return ws;
     }
 
+    private static Path requirePath(String value, com.zinja.recafmcp.http.Response res) throws Exception {
+        if (value == null || value.isBlank()) {
+            res.status(400).json(JsonResponses.error("missing 'path'"));
+            return null;
+        }
+
+        Path path = Paths.get(value).toAbsolutePath().normalize();
+        if (!Files.exists(path)) {
+            res.status(404).json(JsonResponses.error("path not found: " + path));
+            return null;
+        }
+        return path;
+    }
+
     private static JsonObject resourceSummary(WorkspaceResource resource) {
-        JsonObject obj = new JsonObject();
-        if (resource == null) return obj;
-        // Best-effort summary; richer metadata (path, jar version) depends on the
-        // concrete WorkspaceResource subtype and can be added later.
-        obj.addProperty("type", resource.getClass().getSimpleName());
-        obj.addProperty("class_count", (int) resource.jvmClassBundleStream()
-                .mapToLong(b -> b.values().size()).sum());
-        obj.addProperty("file_count", (int) resource.fileBundleStream()
-                .mapToLong(b -> b.values().size()).sum());
-        return obj;
+        JsonObject out = new JsonObject();
+        if (resource == null) {
+            return out;
+        }
+
+        Path path = resource.getPropertyValueOrNull(InputFilePathProperty.KEY);
+        if (path == null && resource instanceof WorkspaceFileResource fileResource) {
+            path = InputFilePathProperty.get(fileResource.getFileInfo());
+        }
+        out.addProperty("type", resource.getClass().getSimpleName());
+        if (path != null) {
+            out.addProperty("path", path.toString());
+        }
+        out.addProperty("class_count", (int) resource.classBundleStreamRecursive()
+                .mapToLong(bundle -> bundle.size())
+                .sum());
+        out.addProperty("file_count", (int) resource.fileBundleStreamRecursive()
+                .mapToLong(bundle -> bundle.size())
+                .sum());
+        return out;
     }
 }

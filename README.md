@@ -1,46 +1,163 @@
 # Recaf MCP
 
-Recaf MCP is a two-part bridge that exposes Recaf 4 reverse-engineering features as MCP tools.
+Recaf MCP is a two-part reverse-engineering bridge for Recaf 4.
 
-- The Java plugin runs inside Recaf and serves a small localhost HTTP API.
-- The Python server exposes that API as MCP tools for clients like Codex or Claude Desktop.
+- The Java plugin runs inside Recaf and exposes a small localhost HTTP API.
+- The Python MCP server turns that API into MCP tools for Codex, Claude Desktop, and similar clients.
+
+This repository now contains both parts in one place.
+
+## What It Is
+
+Think of it as:
+
+`LLM client -> MCP server -> Recaf plugin -> Recaf workspace`
+
+The goal is the same shape as `jadx_mcp_server`, but for JVM bytecode work inside Recaf.
 
 ## Architecture
 
 ```mermaid
-graph LR
-    A["Codex / Claude"] --> B["Python MCP Server"]
-    B --> C["Recaf MCP Plugin"]
-    C --> D["Recaf 4 Workspace"]
+sequenceDiagram
+    participant LLM as LLM Client
+    participant MCP as Recaf MCP Server
+    participant Plugin as Recaf MCP Plugin
+    participant Recaf as Recaf 4
+
+    LLM->>MCP: Invoke MCP tool
+    MCP->>Plugin: HTTP request
+    Plugin->>Recaf: Query or mutate workspace
+    Recaf-->>Plugin: Result
+    Plugin-->>MCP: JSON response
+    MCP-->>LLM: MCP tool result
 ```
 
 ## Repository Layout
 
 ```text
 .
-├── src/                    # Recaf plugin source
-├── mcp-server/             # Python MCP server
-├── libs/                   # Put recaf.jar here locally (not committed)
-├── .mcp.json               # Project MCP config for local clients
-├── build.gradle.kts        # Plugin build
+├── src/                  # Java plugin source
+├── mcp-server/           # Python MCP implementation
+├── libs/                 # Local recaf.jar goes here, not committed
+├── recaf_mcp_server.py   # Root launcher for the MCP server
+├── requirements.txt      # Python dependencies
+├── test.sh               # Basic smoke test
+├── .mcp.json             # Project-local MCP config
 └── README.md
 ```
+
+## Current MCP Tools
+
+### Workspace
+
+- `get_workspace_info`
+- `open_workspace`
+- `close_workspace`
+- `add_supporting_resource`
+- `list_supporting_resources`
+- `fetch_current_class`
+- `get_selected_text`
+
+### Classes
+
+- `get_all_classes`
+- `get_class_info`
+- `get_class_source`
+- `get_bytecode_of_class`
+- `get_methods_of_class`
+- `get_fields_of_class`
+- `get_inner_classes`
+- `get_annotations_of_class`
+- `get_raw_class_bytes`
+
+### Methods
+
+- `get_method_by_name`
+- `get_method_bytecode`
+- `get_method_info`
+
+### Search
+
+- `search_classes_by_name`
+- `search_members_by_name`
+- `search_strings`
+- `search_numbers`
+- `search_instructions`
+
+### Cross References
+
+- `get_xrefs_to_class`
+- `get_xrefs_to_method`
+- `get_xrefs_to_field`
+- `get_callers_of_method`
+- `get_callees_of_method`
+- `get_overrides_of_method`
+
+### Refactor
+
+- `rename_class`
+- `rename_method`
+- `rename_field`
+- `rename_package`
+- `rename_local_variable`
+- `apply_mappings`
+
+### Decompilers
+
+- `list_decompilers`
+- `set_active_decompiler`
+- `decompile_class_with`
+
+### Inheritance
+
+- `get_superclasses`
+- `get_interfaces`
+- `get_direct_subclasses`
+- `get_all_subclasses`
+- `get_implementors`
+
+### Resources And Export
+
+- `get_all_file_names`
+- `get_file_content`
+- `get_manifest`
+- `get_strings_from_resources`
+- `export_workspace`
+- `get_modified_classes`
+- `revert_class`
+
+## Current Status
+
+This project is usable, but still early.
+
+- The bridge is working end to end.
+- Recaf loads the plugin and serves `127.0.0.1:8750`.
+- The Python server starts in stdio or streamable HTTP mode.
+- A number of advanced routes are still stubbed in the Java plugin, especially parts of workspace import, xrefs, refactor, export, and some searches.
+
+So it is closer to `jadx_mcp_server` in repo shape and usage flow than in raw feature completeness.
 
 ## Requirements
 
 - Java 25
 - Python 3.10+
-- A local `recaf.jar` from Recaf 4
+- A local `recaf.jar`
 
-## Quick Start
+## Getting Started
 
-### 1. Prepare Recaf
+### 1. Provide `recaf.jar`
 
-Place `recaf.jar` in one of these locations:
+The build looks for Recaf in this order:
 
-- `libs/recaf.jar`
-- `../recaf/recaf.jar`
-- or set `RECAF_JAR=/absolute/path/to/recaf.jar`
+1. `RECAF_JAR`
+2. `libs/recaf.jar`
+3. `../recaf/recaf.jar`
+
+Example:
+
+```powershell
+$env:RECAF_JAR="D:\deobf\recaf\recaf.jar"
+```
 
 ### 2. Build the plugin
 
@@ -48,7 +165,7 @@ Place `recaf.jar` in one of these locations:
 .\gradlew.bat jar
 ```
 
-The plugin jar will be created at:
+Output:
 
 ```text
 build/libs/recaf-mcp-plugin-0.1.0.jar
@@ -56,9 +173,9 @@ build/libs/recaf-mcp-plugin-0.1.0.jar
 
 ### 3. Install the plugin into Recaf
 
-Copy `build/libs/recaf-mcp-plugin-0.1.0.jar` into your Recaf plugins directory, then start Recaf.
+Copy the built jar into your Recaf plugins directory and launch Recaf.
 
-When it loads correctly, Recaf will log:
+When it loads correctly, Recaf logs:
 
 ```text
 Recaf MCP plugin listening on http://127.0.0.1:8750
@@ -67,63 +184,82 @@ Recaf MCP plugin listening on http://127.0.0.1:8750
 ### 4. Install Python dependencies
 
 ```powershell
-pip install -r mcp-server/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 5. Start the MCP server
 
-For stdio clients:
+StdIO mode:
 
 ```powershell
-python mcp-server/recaf_mcp_server.py
+python recaf_mcp_server.py
 ```
 
-For HTTP testing:
+HTTP mode:
 
 ```powershell
-python mcp-server/recaf_mcp_server.py --http --port 8751
+python recaf_mcp_server.py --http --port 8751
 ```
 
 ## MCP Client Config
 
-This repository already includes a project-level `.mcp.json`:
+This repository includes a project-local `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
     "recaf": {
       "command": "python",
-      "args": ["mcp-server/recaf_mcp_server.py"]
+      "args": ["recaf_mcp_server.py"]
     }
   }
 }
 ```
 
-## Current Status
-
-This project is usable, but still early.
-
-- Basic class, method, decompile, inheritance, search, and file endpoints work.
-- Some advanced routes are still stubs, especially parts of xrefs, refactor, export, and workspace import.
-
-## Local Development
-
-Useful endpoints:
+## Useful Endpoints
 
 - Plugin HTTP: `http://127.0.0.1:8750`
 - MCP HTTP mode: `http://127.0.0.1:8751/mcp`
 
-Health checks:
+Quick health check:
 
 ```powershell
 Invoke-WebRequest http://127.0.0.1:8750/health
-python mcp-server/recaf_mcp_server.py --http --port 8751
 ```
 
-## Publishing Notes
+## Smoke Test
 
-- Do not commit `libs/recaf.jar`.
-- Do not commit `build/`, `.gradle/`, or Python cache files.
-- Pick a license before publishing publicly.
+```bash
+./test.sh
+```
 
-See [PUBLISHING.md](./PUBLISHING.md) for a short GitHub checklist.
+That test does three things:
+
+1. Verifies `recaf.jar` is available
+2. Builds the plugin
+3. Checks that the Python launcher starts
+
+## Security Warning
+
+If you run:
+
+```powershell
+python recaf_mcp_server.py --http --host 0.0.0.0
+```
+
+you expose the MCP server over plain HTTP with no authentication.
+
+That means anyone on the reachable network can invoke all exposed tools.
+Use localhost by default, or put it behind a firewall or tunnel.
+
+## GitHub Publishing
+
+This repository is ready to publish as a single project.
+
+- `README.md` is present
+- `.gitignore` is present
+- `.mcp.json` is present
+- root launcher and requirements are present
+- a smoke-test script is present
+
+See [PUBLISHING.md](./PUBLISHING.md) for the short checklist.

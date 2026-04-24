@@ -13,7 +13,10 @@
 
 - Java plugin source under `src/`
 - Python MCP server under `mcp-server/`
+- root `recaf_mcp_server.py`
+- root `requirements.txt`
 - `README.md`
+- `LICENSE`
 - `.gitignore`
 - `.mcp.json`
 
@@ -57,7 +60,3 @@ Attach this file to the first GitHub Release:
 ```text
 build/libs/recaf-mcp-plugin-0.1.0.jar
 ```
-
-## One Important Decision
-
-Choose a license before publishing publicly. This repository does not set one automatically.

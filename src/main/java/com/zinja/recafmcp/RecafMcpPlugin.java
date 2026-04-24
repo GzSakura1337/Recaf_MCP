@@ -17,23 +17,17 @@ import jakarta.inject.Inject;
 import software.coley.recaf.plugin.Plugin;
 import software.coley.recaf.plugin.PluginInformation;
 import software.coley.recaf.services.decompile.DecompilerManager;
+import software.coley.recaf.services.decompile.DecompilerManagerConfig;
 import software.coley.recaf.services.inheritance.InheritanceGraphService;
 import software.coley.recaf.services.mapping.MappingApplierService;
+import software.coley.recaf.services.mapping.format.MappingFormatManager;
 import software.coley.recaf.services.search.SearchService;
 import software.coley.recaf.services.workspace.WorkspaceManager;
+import software.coley.recaf.services.workspace.io.ResourceImporter;
 
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/**
- * Recaf 4 plugin entry point — exposes the services the Python MCP server needs
- * over a localhost HTTP API (default 127.0.0.1:8750).
- *
- * Port / host are controlled by system properties so the user can override at
- * launch:
- *   -Drecaf.mcp.host=127.0.0.1
- *   -Drecaf.mcp.port=8750
- */
 @ApplicationScoped
 @PluginInformation(
         id = "recaf-mcp-plugin",
@@ -46,14 +40,16 @@ import java.util.logging.Logger;
 )
 public class RecafMcpPlugin implements Plugin {
     private static final Logger LOG = Logger.getLogger(RecafMcpPlugin.class.getName());
-
     private static final String DEFAULT_HOST = "127.0.0.1";
     private static final int DEFAULT_PORT = 8750;
 
     private final WorkspaceManager workspaceManager;
+    private final ResourceImporter resourceImporter;
     private final DecompilerManager decompilerManager;
+    private final DecompilerManagerConfig decompilerManagerConfig;
     private final SearchService searchService;
     private final MappingApplierService mappingApplierService;
+    private final MappingFormatManager mappingFormatManager;
     private final InheritanceGraphService inheritanceGraphService;
 
     private McpHttpServer server;
@@ -61,14 +57,20 @@ public class RecafMcpPlugin implements Plugin {
 
     @Inject
     public RecafMcpPlugin(WorkspaceManager workspaceManager,
+                          ResourceImporter resourceImporter,
                           DecompilerManager decompilerManager,
+                          DecompilerManagerConfig decompilerManagerConfig,
                           SearchService searchService,
                           MappingApplierService mappingApplierService,
+                          MappingFormatManager mappingFormatManager,
                           InheritanceGraphService inheritanceGraphService) {
         this.workspaceManager = workspaceManager;
+        this.resourceImporter = resourceImporter;
         this.decompilerManager = decompilerManager;
+        this.decompilerManagerConfig = decompilerManagerConfig;
         this.searchService = searchService;
         this.mappingApplierService = mappingApplierService;
+        this.mappingFormatManager = mappingFormatManager;
         this.inheritanceGraphService = inheritanceGraphService;
     }
 
@@ -81,18 +83,16 @@ public class RecafMcpPlugin implements Plugin {
         uiState.install(workspaceManager);
 
         server = new McpHttpServer(host, port);
-
-        // Health
         server.get("/health", (req, res) -> res.text("ok"));
 
-        // Register domain routes.
-        new WorkspaceRoutes(workspaceManager, uiState).register(server);
+        new WorkspaceRoutes(workspaceManager, resourceImporter, uiState).register(server);
         new ClassRoutes(workspaceManager).register(server);
         new MethodRoutes(workspaceManager).register(server);
         new SearchRoutes(workspaceManager, searchService).register(server);
-        new XrefsRoutes(workspaceManager).register(server);
-        new RefactorRoutes(workspaceManager, mappingApplierService).register(server);
-        new DecompileRoutes(workspaceManager, decompilerManager).register(server);
+        new XrefsRoutes(workspaceManager, searchService, inheritanceGraphService).register(server);
+        new RefactorRoutes(workspaceManager, mappingApplierService, mappingFormatManager, inheritanceGraphService)
+                .register(server);
+        new DecompileRoutes(workspaceManager, decompilerManager, decompilerManagerConfig).register(server);
         new InheritanceRoutes(workspaceManager, inheritanceGraphService).register(server);
         new FilesRoutes(workspaceManager).register(server);
         new ExportRoutes(workspaceManager).register(server);
