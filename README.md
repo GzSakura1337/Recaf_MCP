@@ -211,12 +211,19 @@ This repository includes a project-local `.mcp.json` using HTTP MCP:
 ```json
 {
   "mcpServers": {
-    "recaf": {
+    "recaf-mcp": {
       "url": "http://127.0.0.1:8751/mcp"
     }
   }
 }
 ```
+
+## Codex Notes
+
+- To get the same tool-card style as `jadx-mcp`, Codex must load this server as an MCP server at chat startup.
+- Existing chats do not hot-reload newly added MCP servers.
+- If Recaf and `start_recaf_mcp_http.ps1` are already running, open a new Codex chat in this folder.
+- When it is loaded correctly, tool usage appears as `Used recaf-mcp` instead of plain PowerShell commands.
 
 ## Useful Endpoints
 
