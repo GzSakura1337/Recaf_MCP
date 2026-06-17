@@ -17,15 +17,21 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.*;
+import java.util.logging.Logger;
+import java.util.logging.Level;
 
 public class BytecodeEditRoutes {
+    private static final Logger LOG = Logger.getLogger(BytecodeEditRoutes.class.getName());
     private final WorkspaceManager wm;
 
     public BytecodeEditRoutes(WorkspaceManager wm) {
         this.wm = wm;
+        LOG.log(Level.INFO, "BytecodeEditRoutes constructed");
     }
 
     public void register(McpHttpServer server) {
+        LOG.log(Level.INFO, "BytecodeEditRoutes.register() starting, registering 16 routes");
+        server.get("/__bytecode_edit_diag__", (req, res) -> res.text("ok"));
 
         // ── list instructions ────────────────────────────────────────
         server.get("/method/instructions", (req, res) -> {
@@ -259,6 +265,8 @@ public class BytecodeEditRoutes {
             out.addProperty("output_path", path.toString());
             res.json(out);
         });
+
+        LOG.log(Level.INFO, "BytecodeEditRoutes.register() completed successfully");
     }
 
     // ── helpers ──────────────────────────────────────────────────────────

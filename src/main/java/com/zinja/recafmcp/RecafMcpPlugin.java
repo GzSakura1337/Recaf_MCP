@@ -98,6 +98,7 @@ public class RecafMcpPlugin implements Plugin {
         new FilesRoutes(workspaceManager).register(server);
         new ExportRoutes(workspaceManager).register(server);
         new BytecodeEditRoutes(workspaceManager).register(server);
+        server.get("/__plugin_diag__", (req, res) -> res.text("plugin ok, routes registered"));
 
         try {
             server.start();
