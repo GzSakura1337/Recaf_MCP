@@ -1,6 +1,7 @@
 package com.zinja.recafmcp;
 
 import com.zinja.recafmcp.http.McpHttpServer;
+import com.zinja.recafmcp.routes.BytecodeEditRoutes;
 import com.zinja.recafmcp.routes.ClassRoutes;
 import com.zinja.recafmcp.routes.DecompileRoutes;
 import com.zinja.recafmcp.routes.ExportRoutes;
@@ -96,6 +97,7 @@ public class RecafMcpPlugin implements Plugin {
         new InheritanceRoutes(workspaceManager, inheritanceGraphService).register(server);
         new FilesRoutes(workspaceManager).register(server);
         new ExportRoutes(workspaceManager).register(server);
+        new BytecodeEditRoutes(workspaceManager).register(server);
 
         try {
             server.start();

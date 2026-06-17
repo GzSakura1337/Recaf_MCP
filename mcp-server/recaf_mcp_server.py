@@ -49,6 +49,7 @@ from src.server.tools import (
     inheritance_tools,
     resource_tools,
     export_tools,
+    bytecode_edit_tools,
 )
 
 
@@ -493,6 +494,215 @@ async def get_modified_classes() -> dict:
 async def revert_class(class_name: str) -> dict:
     """Discard in-memory modifications to a class and restore the original bytes."""
     return await tools.export_tools.revert_class(class_name)
+
+
+# =============================================================================
+# Bytecode Edit
+# =============================================================================
+
+@mcp.tool()
+async def list_method_instructions(
+    class_name: str, method_name: str, descriptor: str = ""
+) -> dict:
+    """Return every instruction in a method as a flat JSON array with indices and opcodes."""
+    return await tools.bytecode_edit_tools.list_method_instructions(
+        class_name, method_name, descriptor
+    )
+
+
+@mcp.tool()
+async def replace_method_body(
+    class_name: str,
+    method_name: str,
+    instructions: list,
+    descriptor: str = "",
+) -> dict:
+    """
+    Replace the entire body of a method.
+
+    `instructions` is a list of dicts: {"opcode": "ALOAD", "args": [0]}, etc.
+    Jump targets are integer indices. Labels/frames are auto-generated.
+    """
+    return await tools.bytecode_edit_tools.replace_method_body(
+        class_name, method_name, instructions, descriptor
+    )
+
+
+@mcp.tool()
+async def replace_instruction(
+    class_name: str,
+    method_name: str,
+    index: int,
+    instruction: dict,
+    descriptor: str = "",
+) -> dict:
+    """Replace a single instruction at the given index within a method."""
+    return await tools.bytecode_edit_tools.replace_instruction(
+        class_name, method_name, index, instruction, descriptor
+    )
+
+
+@mcp.tool()
+async def insert_instruction(
+    class_name: str,
+    method_name: str,
+    index: int,
+    instruction: dict,
+    descriptor: str = "",
+) -> dict:
+    """Insert a new instruction at the given index (use count to append)."""
+    return await tools.bytecode_edit_tools.insert_instruction(
+        class_name, method_name, index, instruction, descriptor
+    )
+
+
+@mcp.tool()
+async def remove_instruction(
+    class_name: str,
+    method_name: str,
+    index: int,
+    descriptor: str = "",
+) -> dict:
+    """Remove the instruction at the given index from a method."""
+    return await tools.bytecode_edit_tools.remove_instruction(
+        class_name, method_name, index, descriptor
+    )
+
+
+@mcp.tool()
+async def assemble_method(
+    class_name: str,
+    method_name: str,
+    text: str,
+    descriptor: str = "",
+) -> dict:
+    """
+    Assemble a method body from JASM-like text.
+
+    One instruction per line: ALOAD 0, RETURN, etc.
+    Supports labels (GOTO L0), try-catch, line numbers. Comments start with # or //.
+    """
+    return await tools.bytecode_edit_tools.assemble_method(
+        class_name, method_name, text, descriptor
+    )
+
+
+@mcp.tool()
+async def edit_class_access(
+    class_name: str,
+    set_flags: list = None,
+    clear_flags: list = None,
+) -> dict:
+    """Set or clear access flags on a class (public, private, static, final, etc.)."""
+    return await tools.bytecode_edit_tools.edit_class_access(
+        class_name, set_flags, clear_flags
+    )
+
+
+@mcp.tool()
+async def edit_method_access(
+    class_name: str,
+    method_name: str,
+    set_flags: list = None,
+    clear_flags: list = None,
+    descriptor: str = "",
+) -> dict:
+    """Set or clear access flags on a method."""
+    return await tools.bytecode_edit_tools.edit_method_access(
+        class_name, method_name, set_flags, clear_flags, descriptor
+    )
+
+
+@mcp.tool()
+async def edit_field_access(
+    class_name: str,
+    field_name: str,
+    set_flags: list = None,
+    clear_flags: list = None,
+    descriptor: str = "",
+) -> dict:
+    """Set or clear access flags on a field."""
+    return await tools.bytecode_edit_tools.edit_field_access(
+        class_name, field_name, set_flags, clear_flags, descriptor
+    )
+
+
+@mcp.tool()
+async def replace_class_bytes(class_name: str, bytes_base64: str) -> dict:
+    """Replace a class entirely from base64-encoded class file bytes."""
+    return await tools.bytecode_edit_tools.replace_class_bytes(class_name, bytes_base64)
+
+
+@mcp.tool()
+async def add_method(
+    class_name: str,
+    method_name: str,
+    descriptor: str,
+    access: list = None,
+    instructions: list = None,
+) -> dict:
+    """Add a new method to a class with optional instruction body."""
+    return await tools.bytecode_edit_tools.add_method(
+        class_name, method_name, descriptor, access, instructions
+    )
+
+
+@mcp.tool()
+async def remove_method(
+    class_name: str, method_name: str, descriptor: str = ""
+) -> dict:
+    """Remove a method from a class."""
+    return await tools.bytecode_edit_tools.remove_method(
+        class_name, method_name, descriptor
+    )
+
+
+@mcp.tool()
+async def add_field(
+    class_name: str,
+    field_name: str,
+    descriptor: str,
+    access: list = None,
+    signature: str = None,
+    value=None,
+) -> dict:
+    """Add a new field to a class."""
+    return await tools.bytecode_edit_tools.add_field(
+        class_name, field_name, descriptor, access, signature, value
+    )
+
+
+@mcp.tool()
+async def remove_field(
+    class_name: str, field_name: str, descriptor: str = ""
+) -> dict:
+    """Remove a field from a class."""
+    return await tools.bytecode_edit_tools.remove_field(
+        class_name, field_name, descriptor
+    )
+
+
+@mcp.tool()
+async def set_try_catch_blocks(
+    class_name: str,
+    method_name: str,
+    try_catch_blocks: list,
+    descriptor: str = "",
+) -> dict:
+    """
+    Set try-catch blocks for a method.
+
+    Each block: {"start": "L0", "end": "L1", "handler": "L2", "type": "java/lang/Exception"}
+    """
+    return await tools.bytecode_edit_tools.set_try_catch_blocks(
+        class_name, method_name, try_catch_blocks, descriptor
+    )
+
+
+@mcp.tool()
+async def save_workspace(output_path: str) -> dict:
+    """Export the (possibly modified) workspace back to disk."""
+    return await tools.bytecode_edit_tools.save_workspace(output_path)
 
 
 # =============================================================================
